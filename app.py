@@ -4,10 +4,10 @@ from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# Sayfa yapılandırması
-st.set_page_config(page_title="SRAL Disiplin", page_icon="🛡️")
+# --- SAYFA AYARLARI ---
+st.set_page_config(page_title="SRAL Disiplin Takip", page_icon="🛡️")
 
-# Google Sheets Bağlantı Fonksiyonu
+# --- GOOGLE SHEETS BAĞLANTISI ---
 def connect_to_gsheet():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds_dict = st.secrets["gcp_service_account"]
@@ -15,51 +15,67 @@ def connect_to_gsheet():
     client = gspread.authorize(creds)
     return client.open_by_key(st.secrets["sheet_id"]).sheet1
 
-# Öğrenci Listesini Yükle
+# --- ÖĞRENCİ VERİSİNİ YÜKLE ---
 @st.cache_data
 def load_students():
-    return pd.read_excel("ogrenciler.xlsx")
+    # Excel'i oku ve sütun isimlerindeki boşlukları temizle
+    data = pd.read_excel("ogrenciler.xlsx")
+    data.columns = [str(c).strip() for c in data.columns]
+    return data
 
-df = load_students()
+try:
+    df = load_students()
+except Exception as e:
+    st.error(f"Excel dosyası okunamadı: {e}")
+    st.stop()
 
+# --- ARAYÜZ ---
 st.title("🛡️ SRAL Disiplin Takip")
 
-# Öğretmen Bilgisi
 with st.sidebar:
-    ogretmen = st.text_input("Öğretmen Ad Soyad")
-    ders = st.selectbox("Ders Saati", list(range(1, 10)))
+    st.header("⚙️ Giriş Yapan")
+    ogretmen_ad = st.text_input("Öğretmen Ad Soyad")
+    ders_saati = st.selectbox("Ders Saati", list(range(1, 10)))
 
-# Uygulama Ana Ekranı
-ogr_no = st.number_input("Öğrenci Numarası", min_value=1, step=1, value=None)
+st.subheader("🔍 Öğrenci Sorgula")
+# Numarayı metin olarak alıyoruz (bazı Excel'lerde sayı, bazılarında metin olduğu için en güvenlisi)
+ogr_no_input = st.text_input("Öğrenci Numarasını Yazın ve Enter'a Basın")
 
-if ogr_no:
-    ogrenci = df[df['Öğrenci No'] == ogr_no]
+if ogr_no_input:
+    # Numarayı Excel'de ara (Sütun adının 'Öğrenci No' olduğunu varsayıyoruz)
+    # Eğer Excel'de sadece 'No' yazıyorsa aşağıdaki kısmı ['No'] yapın
+    ogrenci_res = df[df['Öğrenci No'].astype(str) == str(ogr_no_input)]
     
-    if not ogrenci.empty:
-        ad_soyad = ogrenci.iloc[0]['Ad Soyad']
-        sinif = ogrenci.iloc[0]['Sınıf']
-        st.success(f"👤 **{ad_soyad}** ({sinif})")
+    if not ogrenci_res.empty:
+        # Excel'deki 'Ad Soyad' ve 'Sınıf' sütunlarını al
+        ad_soyad = ogrenci_res.iloc[0]['Ad Soyad']
+        sinif = ogrenci_res.iloc[0]['Sınıf']
         
-        # İSTENEN 4 ANA BAŞLIK
-        secenekler = st.multiselect(
-            "İhlal Türlerini İşaretleyin:",
+        st.success(f"👤 **{ad_soyad}** | 🏫 **{sinif}**")
+        
+        # 4 ANA BAŞLIKLI İHLAL SEÇİMİ
+        ihlaller = st.multiselect(
+            "İhlal Türlerini Seçiniz (Birden fazla seçilebilir):",
             ["Saç-Sakal", "Kıyafet", "Makyaj", "Takı"]
         )
-        notlar = st.text_input("Ek Not (İsteğe bağlı)")
+        notlar = st.text_input("Ek Not:")
         
-        if st.button("KAYDET"):
-            if not ogretmen:
-                st.error("Lütfen adınızı girin!")
-            elif not secenekler:
+        if st.button("SİSTEME KAYDET"):
+            if not ogretmen_ad:
+                st.error("Lütfen önce adınızı girin!")
+            elif not ihlaller:
                 st.error("En az bir ihlal seçmelisiniz!")
             else:
                 try:
                     sheet = connect_to_gsheet()
-                    tarih = datetime.now().strftime("%d/%m/%Y %H:%M")
+                    tarih = datetime.now().strftime("%d.%m.%Y %H:%M")
                     # Veriyi Google Sheets'e gönder
-                    sheet.append_row([tarih, ogretmen, ders, ogr_no, ad_soyad, sinif, ", ".join(secenekler), notlar])
-                    st.success("Kayıt başarıyla gönderildi!")
+                    sheet.append_row([
+                        tarih, ogretmen_ad, ders_saati, ogr_no_input, ad_soyad, sinif, ", ".join(ihlaller), notlar
+                    ])
+                    st.balloons()
+                    st.success("Veri başarıyla Google Tabloya işlendi.")
                 except Exception as e:
-                    st.error(f"Bağlantı Hatası: {e}")
+                    st.error(f"Kayıt sırasında hata oluştu: {e}")
     else:
-        st.warning("Bu numara listede yok!")
+        st.error("❌ Bu numaralı bir öğrenci bulunamadı. Lütfen Excel dosyanızı kontrol edin.")
